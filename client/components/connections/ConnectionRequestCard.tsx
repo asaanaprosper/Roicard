@@ -1,0 +1,167 @@
+/**
+ * ConnectionRequestCard
+ *
+ * Displays an incoming connection request with accept/decline actions.
+ *
+ * Props:
+ * - request: IncomingConnectionRequest from storage
+ * - onAccept: accept handler — transitions to Connected
+ * - onDecline: decline handler — removes request
+ * - isProcessing: disables buttons during mock API delay
+ */
+
+"use client";
+
+import { ConnectionAvatar } from "@/components/connections/ConnectionAvatar";
+import { Button } from "@/components/ui/Button";
+import {
+  formatConnectionDate,
+  getPersonFullName,
+} from "@/lib/connections/helpers";
+import type {
+  ConnectionPerson,
+  IncomingConnectionRequest,
+} from "@/lib/connections/types";
+import { Check, Flag, MapPin, ShieldBan, X } from "lucide-react";
+import Link from "next/link";
+
+type ConnectionRequestCardProps = {
+  request: IncomingConnectionRequest;
+  onAccept: (requestId: string) => void;
+  onDecline: (requestId: string) => void;
+  onViewGuest: (person: ConnectionPerson) => void;
+  onBlock?: (request: IncomingConnectionRequest) => void;
+  onReport?: (request: IncomingConnectionRequest) => void;
+  isProcessing?: boolean;
+};
+
+export function ConnectionRequestCard({
+  request,
+  onAccept,
+  onDecline,
+  onViewGuest,
+  onBlock,
+  onReport,
+  isProcessing = false,
+}: ConnectionRequestCardProps) {
+  const { person } = request;
+  const fullName = getPersonFullName(person);
+
+  const name =
+    person.username && person.guestUserId ? (
+      <Link
+        href={`/${person.username}`}
+        className="block truncate font-semibold text-roicard-text underline-offset-4 hover:text-roicard-accent hover:underline"
+      >
+        {fullName}
+      </Link>
+    ) : (
+      <button
+        type="button"
+        onClick={() => onViewGuest(person)}
+        className="block truncate font-semibold text-roicard-text underline-offset-4 hover:text-roicard-accent hover:underline"
+        title="View guest profile"
+      >
+        {fullName}
+      </button>
+    );
+
+  return (
+    <article className="glass-card rounded-2xl p-4 sm:p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 items-center gap-4">
+          <ConnectionAvatar person={person} size="lg" />
+          <div className="min-w-0">
+            <h3 className="truncate">{name}</h3>
+            <p className="mt-0.5 truncate text-sm text-roicard-text-muted">
+              {person.professionalTitle}
+            </p>
+            {person.organization && (
+              <p className="truncate text-sm text-roicard-text-muted/80">
+                {person.organization}
+              </p>
+            )}
+            {request.meetingContext && (
+              <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-roicard-text">
+                <MapPin className="h-3.5 w-3.5 shrink-0 text-roicard-accent" aria-hidden />
+                <span className="truncate">Met at {request.meetingContext}</span>
+              </p>
+            )}
+            {request.introduction && (
+              <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-roicard-text-muted">
+                “{request.introduction}”
+              </p>
+            )}
+            {request.intent && (
+              <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-roicard-text-muted/80">
+                <span className="font-medium text-roicard-accent">Wants to connect: </span>
+                {request.intent}
+              </p>
+            )}
+            {request.memberNote && (
+              <p className="mt-2 line-clamp-3 rounded-lg bg-roicard-bg-muted/60 px-2.5 py-2 text-xs leading-relaxed text-roicard-text-muted">
+                <span className="font-medium text-roicard-text">Connection note: </span>
+                {request.memberNote}
+              </p>
+            )}
+            {request.matchReason && (
+              <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-roicard-text-muted/80">
+                <span className="font-medium text-roicard-accent">Match reason: </span>
+                {request.matchReason}
+              </p>
+            )}
+            <p className="mt-2 text-xs text-roicard-text-muted">
+              Requested {formatConnectionDate(request.requestedAt)}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-2 sm:flex-col sm:gap-2 lg:flex-row">
+          <Button
+            fullWidth
+            className="rounded-xl sm:min-w-[120px]"
+            disabled={isProcessing}
+            onClick={() => onAccept(request.id)}
+          >
+            <Check className="h-4 w-4" />
+            Accept
+          </Button>
+          <Button
+            variant="secondary"
+            fullWidth
+            className="rounded-xl sm:min-w-[120px]"
+            disabled={isProcessing}
+            onClick={() => onDecline(request.id)}
+          >
+            <X className="h-4 w-4" />
+            Decline
+          </Button>
+          {onBlock && request.person.userId && (
+            <Button
+              variant="ghost"
+              fullWidth
+              className="rounded-xl sm:min-w-[120px]"
+              disabled={isProcessing}
+              onClick={() => onBlock(request)}
+            >
+              <ShieldBan className="h-4 w-4" />
+              Block
+            </Button>
+          )}
+          {onReport && request.person.userId && (
+            <Button
+              variant="ghost"
+              fullWidth
+              className="rounded-xl sm:min-w-[120px]"
+              disabled={isProcessing}
+              onClick={() => onReport(request)}
+            >
+              <Flag className="h-4 w-4" />
+              Report
+            </Button>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}

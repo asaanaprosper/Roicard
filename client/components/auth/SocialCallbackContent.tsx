@@ -1,0 +1,77 @@
+"use client";
+
+import { useAuth } from "@/contexts/AuthContext";
+import { destinationForUser } from "@/lib/authRouting";
+import { signupErrorMessage } from "@/lib/oauthErrors";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+
+function SocialCallbackContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { setSession } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = searchParams.get("token");
+    const rawUser = searchParams.get("user");
+    const errorParam = searchParams.get("error");
+
+    if (errorParam) {
+      setError(
+        errorParam === "provider_not_configured"
+          ? "This sign-in option isn't set up yet. Please use email or Google."
+          : signupErrorMessage(errorParam, "Sign-in")
+      );
+      return;
+    }
+
+    if (!token || !rawUser) {
+      setError("Invalid sign-in response. Please try again.");
+      return;
+    }
+
+    try {
+      const user = JSON.parse(rawUser);
+      setSession(token, user);
+      // The server decides whether this is a new member (onboarding), a
+      // completed member (dashboard) or an admin.
+      router.replace(destinationForUser(user));
+    } catch {
+      setError("Could not complete sign-in. Please try again.");
+    }
+  }, [router, searchParams, setSession]);
+
+  if (error) {
+    return (
+      <div className="space-y-4 text-center">
+        <p className="text-sm text-red-500">{error}</p>
+        <button
+          type="button"
+          onClick={() => router.replace("/auth/login")}
+          className="text-sm font-medium text-roicard-accent transition-colors hover:text-roicard-text"
+        >
+          Back to sign in
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 text-center">
+      <div
+        className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-roicard-border border-t-roicard-accent"
+        aria-hidden
+      />
+      <p className="text-sm text-roicard-text-muted">Completing sign-in…</p>
+    </div>
+  );
+}
+
+export function SocialCallbackContentPage() {
+  return (
+    <Suspense>
+      <SocialCallbackContent />
+    </Suspense>
+  );
+}

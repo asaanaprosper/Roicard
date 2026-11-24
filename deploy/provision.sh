@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+# Roicard droplet provisioning script
+# Target: Ubuntu 24.04 (DigitalOcean droplet, clean install)
+# Run as: sudo bash provision.sh
+#
+# Installs: Nginx, PHP 8.3 (php-fpm), Composer, MySQL 8, Node 24, pm2
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+echo "==> Updating system"
+apt-get update -y && apt-get upgrade -y
+
+echo "==> Installing base packages"
+apt-get install -y \
+    curl wget git unzip zip gnupg ca-certificates \
+    software-properties-common lsb-release ufw \
+    supervisor
+
+echo "==> Adding PHP 8.3 (ondrej) repository"
+add-apt-repository -y ppa:ondrej/php
+apt-get update -y
+
+echo "==> Installing PHP 8.3 + extensions"
+apt-get install -y \
+    php8.3-fpm php8.3-cli php8.3-common \
+    php8.3-mysql php8.3-pgsql php8.3-pdo \
+    php8.3-mbstring php8.3-xml php8.3-curl php8.3-zip \
+    php8.3-gd php8.3-bcmath php8.3-intl php8.3-sqlite3 \
+    php8.3-redis php8.3-imagick
+
+echo "==> Installing Composer"
+if [ ! -f /usr/local/bin/composer ]; then
+    php -r "copy('https://getcomposer.org/installer', '/tmp/composer-setup.php');"
+    php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
+    rm -f /tmp/composer-setup.php
+fi
+composer --version
+
+echo "==> Installing MySQL 8"
+apt-get install -y mysql-server
+
+echo "==> Adding NodeSource Node 24 (Node 20 is EOL and unpatched for CVE-2026-111497)"
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+apt-get install -y nodejs
+npm install -g pm2
+
+echo "==> Installing Nginx"
+apt-get install -y nginx
+
+echo "==> Setting timezone to UTC"
+timedatectl set-timezone UTC
+
+echo "==> Installing Laravel scheduler cron (runs schedule:run every minute)"
+if ! crontab -u www-data -l 2>/dev/null | grep -q 'artisan schedule:run'; then
+    (crontab -u www-data -l 2>/dev/null; echo "* * * * * cd /var/www/roicard && /usr/bin/php artisan schedule:run >> /dev/null 2>&1") | crontab -u www-data -
+fi
+
+echo ""
+echo "Provisioning complete. Next steps:"
+echo "  1) Secure MySQL:  sudo mysql_secure_installation"
+echo "  2) Create DB + user (see deploy/README.md)"
+echo "  3) Copy repo to /var/www/roicard"
+echo "  4) Deploy the nginx config from deploy/nginx.conf"
+echo "  5) Copy systemd/supervisor units from deploy/"
+echo "  6) Run backend/frontend install steps from deploy/README.md"

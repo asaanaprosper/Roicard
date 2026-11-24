@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# Roicard MVP 2 — source control exclusions
+# Secrets, generated files, caches, logs and private data are never committed.
+# ---------------------------------------------------------------------------
+
+# Environment files (keep only placeholder examples)
+.env
+.env.*
+!.env.example
+!.env.*.example
+.client.env.local
+
+# Dependencies
+/vendor/
+/node_modules/
+/client/node_modules/
+/client/.pnp
+/client/.pnp.*
+/client/.yarn/*
+
+# Build output
+/client/.next/
+/client/out/
+/client/dist/
+/client/build/
+/public/hot
+/public/storage
+/public/build
+
+# Laravel generated files
+/bootstrap/cache/*.php
+/storage/app/*
+!/storage/app/.gitignore
+/storage/framework/cache/*
+!/storage/framework/cache/.gitignore
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+/storage/logs/*
+!/storage/logs/.gitignore
+
+# Caches, logs, test artifacts
+/.phpunit.result.cache
+.phpunit.result.cache
+/coverage/
+/client/coverage/
+/client/*.tsbuildinfo
+*.log
+*.cache
+
+# Private data / databases / credentials
+*.sql
+*.sqlite
+*.db
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials.local.txt
+homestead.json
+homestead.yaml
+docker-compose.yml
+
+# Pre-change backups made during security/privacy work
+/.*-backup/
+/*.backup/
+/*-backup/
+
+# Editors and OS metadata
+/.idea
+/.vscode
+.DS_Store
+Thumbs.db
+*.swp

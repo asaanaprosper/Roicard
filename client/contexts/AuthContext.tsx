@@ -1,0 +1,307 @@
+"use client";
+
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from "react";
+import { useRouter } from "next/navigation";
+import * as authApi from "@/lib/api/auth";
+import { clearAllUserStorage } from "@/lib/storageCleanup";
+
+interface User {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  status: string;
+  role: string;
+  email_verified?: boolean;
+  onboarding_completed?: boolean;
+  next_step?: authApi.NextStep;
+  is_deactivated?: boolean;
+  profile_completion_pct?: number;
+  campaign_code?: string | null;
+  activation_fee?: number;
+  draft_closes_at?: string | null;
+}
+
+interface AuthContextValue {
+  user: User | null;
+  token: string | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  login: (email: string, password: string) => Promise<User | null>;
+  register: (payload: authApi.RegisterPayload) => Promise<void>;
+  logout: () => void;
+  setSession: (token: string, user: User) => void;
+  /** Re-fetches GET /me and updates the cached session (server is authoritative). */
+  refreshUser: () => Promise<User | null>;
+  twoFactorPending: boolean;
+  submitTwoFactor: (code: string) => Promise<User | null>;
+  cancelTwoFactor: () => void;
+}
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+const TOKEN_KEY = "roicard_token";
+const USER_KEY = "roicard_user";
+
+function clearStoredSession() {
+  clearAllUserStorage();
+}
+
+interface StoredSession {
+  token: string;
+  user: User;
+}
+
+function readStoredSession(): StoredSession | null {
+  try {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const rawUser = localStorage.getItem(USER_KEY);
+    if (!token || !rawUser) return null;
+    const user = JSON.parse(rawUser) as User;
+    if (!user || !user.id || !user.email) return null;
+    return { token, user };
+  } catch {
+    clearStoredSession();
+    return null;
+  }
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [twoFactorPending, setTwoFactorPending] = useState(false);
+  const pendingTokenRef = useRef<string | null>(null);
+  const router = useRouter();
+
+  const clearState = useCallback(() => {
+    setToken(null);
+    setUser(null);
+  }, []);
+
+  const setSession = useCallback((newToken: string, newUser: User) => {
+    // Always clear the previous session before writing a new one so a stale
+    // token can never be paired with a different cached user.
+    clearStoredSession();
+    localStorage.setItem(TOKEN_KEY, newToken);
+    localStorage.setItem(USER_KEY, JSON.stringify(newUser));
+    setToken(newToken);
+    setUser(newUser);
+  }, []);
+
+  /**
+   * Refresh the cached user from the server. Used after payment activation or
+   * onboarding completion so `next_step`/`status` flip without a full reload.
+   * Writes storage directly (instead of setSession) to avoid wiping the local
+   * onboarding journey of an in-progress member.
+   */
+  const refreshUser = useCallback(async (): Promise<User | null> => {
+    const existingToken = localStorage.getItem(TOKEN_KEY);
+    if (!existingToken) return null;
+
+    const me = await authApi.me();
+    const freshUser = me.user as User;
+    localStorage.setItem(USER_KEY, JSON.stringify(freshUser));
+    setUser(freshUser);
+    return freshUser;
+  }, []);
+
+  // Boot: restore the cached session, then validate it against GET /me so a
+  // token left behind by a previous account never bleeds into the new one.
+  useEffect(() => {
+    let cancelled = false;
+
+    const boot = async () => {
+      const session = readStoredSession();
+      if (!session) {
+        if (!cancelled) {
+          clearState();
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      setToken(session.token);
+      setUser(session.user);
+
+      try {
+        const me = await authApi.me();
+        if (cancelled) return;
+
+        const server = me.user;
+        const identityMatches =
+          String(server.id) === String(session.user.id) &&
+          String(server.email).toLowerCase() ===
+            String(session.user.email).toLowerCase();
+
+        if (!identityMatches) {
+          // Old token for a different account — purge everything.
+          clearStoredSession();
+          clearState();
+        } else if (
+          server.status !== session.user.status ||
+          server.role !== session.user.role ||
+          server.email_verified !== session.user.email_verified ||
+          server.onboarding_completed !== session.user.onboarding_completed ||
+          server.next_step !== session.user.next_step ||
+          server.is_deactivated !== session.user.is_deactivated
+        ) {
+          // Same identity, but status/role/etc changed server-side — refresh.
+          const freshUser: User = {
+            id: server.id,
+            first_name: server.first_name,
+            last_name: server.last_name,
+            email: server.email,
+            status: server.status,
+            role: server.role,
+            email_verified: server.email_verified,
+            onboarding_completed: server.onboarding_completed,
+            next_step: server.next_step,
+            is_deactivated: server.is_deactivated,
+            profile_completion_pct: server.profile_completion_pct,
+            campaign_code: server.campaign_code,
+            activation_fee: server.activation_fee,
+            draft_closes_at: server.draft_closes_at,
+          };
+          localStorage.setItem(USER_KEY, JSON.stringify(freshUser));
+          setUser(freshUser);
+        }
+      } catch {
+        // 401/409 are already handled in the axios interceptor (storage
+        // cleared + redirected to /auth/login). For any other failure keep
+        // the cached session off the token that remains.
+        if (!cancelled && !localStorage.getItem(TOKEN_KEY)) {
+          clearState();
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    boot();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clearState]);
+
+  // Multi-tab sync: if another tab clears the token (logout), mirror it here.
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === TOKEN_KEY && !event.newValue) {
+        clearState();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [clearState]);
+
+  const login = useCallback(
+    async (email: string, password: string): Promise<User | null> => {
+      const response = await authApi.login({ email, password });
+
+      if (response.two_factor_required && response.pending_token) {
+        // Persist the pending token so the code-verify request can use it.
+        pendingTokenRef.current = response.pending_token;
+        localStorage.setItem(TOKEN_KEY, response.pending_token);
+        localStorage.setItem(USER_KEY, JSON.stringify(response.user));
+        setTwoFactorPending(true);
+        return null;
+      }
+
+      if (response.token) {
+        setSession(response.token, response.user);
+        return response.user;
+      }
+
+      return null;
+    },
+    [setSession]
+  );
+
+  const submitTwoFactor = useCallback(
+    async (code: string): Promise<User | null> => {
+      if (!pendingTokenRef.current) {
+        throw new Error("No pending two-factor session");
+      }
+      // The pending token is already in storage, so the request interceptor
+      // will attach it automatically.
+      try {
+        const response = await authApi.verifyTwoFactor(code);
+        pendingTokenRef.current = null;
+        setTwoFactorPending(false);
+        setSession(response.token!, response.user);
+        return response.user;
+      } catch (error) {
+        throw error;
+      }
+    },
+    [setSession]
+  );
+
+  const cancelTwoFactor = useCallback(() => {
+    pendingTokenRef.current = null;
+    setTwoFactorPending(false);
+    clearStoredSession();
+  }, []);
+
+  const logout = useCallback(() => {
+    clearStoredSession();
+    clearState();
+    router.push("/auth/login");
+  }, [router, clearState]);
+
+  const register = useCallback(
+    async (payload: authApi.RegisterPayload) => {
+      // Purge any previous session BEFORE hitting the API so the old token is
+      // never attached to this request — otherwise the backend would return the
+      // previous account's profile while the UI thinks it just registered.
+      clearStoredSession();
+      clearState();
+
+      const response = await authApi.register(payload);
+      localStorage.setItem(USER_KEY, JSON.stringify(response.user));
+      setUser(response.user);
+      // No token is issued on registration (email verification is required),
+      // so the session stays unauthenticated until the user verifies & logs in.
+    },
+    []
+  );
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isLoading,
+        isAuthenticated: !!token && !!user,
+        login,
+        register,
+        logout,
+        setSession,
+        refreshUser,
+        twoFactorPending,
+        submitTwoFactor,
+        cancelTwoFactor,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth(): AuthContextValue {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+}

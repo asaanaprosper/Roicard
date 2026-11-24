@@ -1,0 +1,269 @@
+/**
+ * User profile and onboarding type definitions.
+ *
+ * These types define the data shape collected during onboarding and stored
+ * as the user's public ROICARD identity. Shared across onboarding, dashboard,
+ * and the public /[username] profile route.
+ */
+
+/** Social link fields collected during onboarding (all optional). */
+export type SocialLinks = {
+  linkedin: string;
+  instagram: string;
+  twitter: string;
+  facebook: string;
+  youtube: string;
+  tiktok: string;
+  snapchat: string;
+  website: string;
+};
+
+/** UI-only connection state for the public profile Connect button. */
+export type ConnectionState = "none" | "pending" | "connected";
+
+/** Guest connection request form payload (wired to the connections API). */
+export type ConnectionRequestData = {
+  name: string;
+  email: string;
+  phone: string;
+  organization: string;
+  /**
+   * Where the two people met (event, NFC tap, coffee shop, mutual friend…).
+   * Optional context that makes the connection easier to remember later.
+   */
+  meetingContext?: string;
+  /** Short introduction — "tell [name] a little about yourself". */
+  introduction?: string;
+  /** Connection intent — why the guest is connecting with this member. */
+  intent?: string;
+};
+
+/** Profile engagement stats shown on public profiles (mock until analytics API). */
+export type ProfileStats = {
+  profileViews: number;
+  connectionRequests: number;
+  totalConnections: number;
+};
+
+/**
+ * Raw form data accumulated across all onboarding wizard steps.
+ * Mirrors the step-by-step collection flow before profile finalization.
+ */
+export type OnboardingFormData = {
+  firstName: string;
+  lastName: string;
+  profilePhotoUrl: string | null;
+  professionalTitle: string;
+  roleDescription: string;
+  organization: string;
+  bio: string;
+  email: string;
+  phone: string;
+  whatsapp: string;
+  dateOfBirth: string;
+  gender: "" | "male" | "female" | "prefer_not_to_say";
+  location: string;
+  social: SocialLinks;
+  /** Areas the member is interested in (selected during onboarding). */
+  interests: string[];
+  /** What opportunities the member is seeking from the community. */
+  seeking: string;
+  /** Value, skills, or opportunities the member can offer others. */
+  offering: string;
+  /** Structured Seeking items (public-safe, active only). */
+  seekingItems?: OpportunityItem[];
+  /** Structured Offering items (public-safe, active only). */
+  offeringItems?: OpportunityItem[];
+};
+
+export type OpportunityItem = {
+  id: number;
+  description: string;
+  categories: { id: number; name: string }[];
+};
+
+/** Membership activation status — payment is optional and can be done later. */
+export type MembershipStatus = "pending" | "active";
+
+export type PublicCatalogItem = {
+  id: number;
+  type: "service" | "product";
+  title: string;
+  description: string | null;
+  category: { id: number; name: string } | null;
+  price: number | null;
+  price_label: string;
+  price_mode: "fixed" | "from" | "on_request";
+  currency: string;
+  cta_type: "enquire" | "request_meeting" | "call";
+  sort_order: number;
+  images: { id: number; url: string; name: string }[];
+};
+
+export type ProfileOrganization = {
+  id: number;
+  name: string;
+  slug: string;
+  industry: string | null;
+  logo_url: string | null;
+  role?: string | null;
+};
+
+/**
+ * Completed user profile persisted after onboarding.
+ * Includes generated username and metadata for public profile + QR code.
+ */
+export type UserProfile = OnboardingFormData & {
+  username: string;
+  createdAt: string;
+  /** Whether the one-time membership fee has been activated. */
+  membershipStatus: MembershipStatus;
+  /** Approved Phase 2 profile content. */
+  skills?: string[];
+  services?: string[];
+  profileType?: "personal" | "business";
+  logoUrl?: string | null;
+  coverImageUrl?: string | null;
+  catalogItems?: PublicCatalogItem[];
+  organizations?: ProfileOrganization[];
+  isVerifiedMember?: boolean;
+  verificationLabel?: string;
+};
+
+/** Empty onboarding form used to initialize wizard state. */
+export const EMPTY_ONBOARDING_DATA: OnboardingFormData = {
+  firstName: "",
+  lastName: "",
+  profilePhotoUrl: null,
+  professionalTitle: "",
+  roleDescription: "",
+  organization: "",
+  bio: "",
+  email: "",
+  phone: "",
+  whatsapp: "",
+  dateOfBirth: "",
+  gender: "",
+  location: "",
+  social: {
+    linkedin: "",
+    instagram: "",
+    twitter: "",
+    facebook: "",
+    youtube: "",
+    tiktok: "",
+    snapchat: "",
+    website: "",
+  },
+  interests: [],
+  seeking: "",
+  offering: "",
+};
+
+/** Gender options a member can select during onboarding. */
+export const GENDER_OPTIONS = [
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "prefer_not_to_say", label: "Prefer not to mention" },
+] as const;
+
+/** Interest areas a member can select during onboarding. */
+export const INTEREST_OPTIONS = [
+  "Technology",
+  "Entrepreneurship",
+  "Leadership",
+  "Networking",
+  "Personal Branding",
+  "Career Growth",
+  "Business",
+  "Creative Arts",
+] as const;
+
+/** Benefits included with ROICARD membership (shown before payment). */
+export const MEMBERSHIP_BENEFITS = [
+  "Professional Identity Profile",
+  "Personalized Profile Link",
+  "Smart Networking Features",
+  "Roicard Smart Card",
+] as const;
+
+/** Supported (mock) payment methods for the membership activation fee. */
+export const PAYMENT_METHODS = [
+  { id: "mtn", label: "MTN Mobile Money" },
+  { id: "telecel", label: "Telecel Cash" },
+  { id: "airteltigo", label: "AirtelTigo Money" },
+  { id: "card", label: "Visa / Mastercard" },
+] as const;
+
+/** One-time membership activation fee in Ghanaian Cedis. */
+export const MEMBERSHIP_FEE_GHS = 350;
+
+/**
+ * Price the member actually pays, resolved from the server payload with the
+ * standard fee as a fallback until it arrives. Program members (campaign code)
+ * pay a discounted rate, shown with a strikethrough original price.
+ */
+export type ActivationPricing = {
+  fee: number;
+  original: number | null;
+  program: boolean;
+};
+
+export function getActivationPricing(user?: {
+  activation_fee?: number;
+  campaign_code?: string | null;
+} | null): ActivationPricing {
+  const fee = user?.activation_fee ?? MEMBERSHIP_FEE_GHS;
+  const program = Boolean(user?.campaign_code?.trim());
+  return {
+    fee,
+    original: program && fee < MEMBERSHIP_FEE_GHS ? MEMBERSHIP_FEE_GHS : null,
+    program,
+  };
+}
+
+/** Metadata for each wizard step — drives stepper UI and navigation. */
+export type OnboardingStepConfig = {
+  id: number;
+  title: string;
+  description: string;
+};
+
+/** All onboarding steps in order (7 total: 6 data steps + review). */
+export const ONBOARDING_STEPS: OnboardingStepConfig[] = [
+  {
+    id: 1,
+    title: "Identity",
+    description: "Tell us who you are",
+  },
+  {
+    id: 2,
+    title: "Professional",
+    description: "Your role and organization",
+  },
+  {
+    id: 3,
+    title: "Bio",
+    description: "Share your story",
+  },
+  {
+    id: 4,
+    title: "Contact",
+    description: "How people can reach you",
+  },
+  {
+    id: 5,
+    title: "Location",
+    description: "Where you're based",
+  },
+  {
+    id: 6,
+    title: "Social",
+    description: "Connect your online presence",
+  },
+  {
+    id: 7,
+    title: "Review",
+    description: "Confirm and launch your card",
+  },
+];

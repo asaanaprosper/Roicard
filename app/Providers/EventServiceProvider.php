@@ -1,0 +1,44 @@
+<?php
+
+namespace App\Providers;
+
+use App\Models\AchievementEntry;
+use App\Models\CommunityMember;
+use App\Models\EducationEntry;
+use App\Models\ExperienceEntry;
+use App\Models\Payment;
+use App\Models\Profile;
+use App\Models\SmartCard;
+use App\Models\SocialLink;
+use App\Models\User;
+use App\Observers\CommunityMemberObserver;
+use App\Observers\PaymentObserver;
+use App\Observers\ProfileContentObserver;
+use App\Observers\ProfileObserver;
+use App\Observers\SmartCardObserver;
+use App\Observers\UserObserver;
+use Illuminate\Auth\Events\Registered;
+use Illuminate\Auth\Listeners\SendEmailVerificationNotification;
+use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        Registered::class => [
+            SendEmailVerificationNotification::class,
+        ],
+    ];
+
+    public function boot(): void
+    {
+        User::observe(UserObserver::class);
+        Profile::observe(ProfileObserver::class);
+        CommunityMember::observe(CommunityMemberObserver::class);
+        Payment::observe(PaymentObserver::class);
+        SmartCard::observe(SmartCardObserver::class);
+        SocialLink::observe(ProfileContentObserver::class);
+        EducationEntry::observe(ProfileContentObserver::class);
+        ExperienceEntry::observe(ProfileContentObserver::class);
+        AchievementEntry::observe(ProfileContentObserver::class);
+    }
+}

@@ -1,0 +1,207 @@
+/**
+ * Step 10 — Payment
+ *
+ * Real payment method selection for members who chose to activate now.
+ * Submits a payment to the backend, persists the journey snapshot, and
+ * redirects to the payment provider (Paystack) to complete checkout.
+ * A "pay later" escape hatch keeps payment fully optional.
+ * Active users skip this step automatically.
+ */
+
+"use client";
+
+import { useJourney } from "@/components/onboarding/journey/JourneyContext";
+import { StepHeading } from "@/components/onboarding/journey/StepHeading";
+import { Button } from "@/components/ui/Button";
+import { useAuth } from "@/contexts/AuthContext";
+import { cn } from "@/lib/cn";
+import {
+  confirmMockPayment,
+  initiatePayment,
+  rememberPaymentReference,
+} from "@/lib/api/payments";
+import { savePaymentSnapshot } from "@/lib/profile/storage";
+import { PAYMENT_METHODS, getActivationPricing } from "@/lib/profile/types";
+import { useEffect, useRef, useState } from "react";
+
+export function StepPayment() {
+  const { user, refreshUser } = useAuth();
+  const { data, submitPayment, skipMembership } = useJourney();
+  const [method, setMethod] = useState<string>(PAYMENT_METHODS[0].id);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const redirectedRef = useRef(false);
+
+  // The server is the source of truth for pricing (NLF campaign members pay a
+  // discounted rate). Resolve server-first, falling back to the standard fee.
+  const pricing = getActivationPricing(user);
+
+  useEffect(() => {
+    if (redirectedRef.current) return;
+    if (user?.status === "active") {
+      redirectedRef.current = true;
+      submitPayment();
+    }
+  }, [user, submitPayment]);
+
+  const handlePay = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      const { payment, redirect } = await initiatePayment({
+        amount: pricing.fee,
+        currency: "GHS",
+        method: "card",
+      });
+
+      rememberPaymentReference(payment.provider_reference);
+
+      // Persist the journey so the profile survives the provider redirect.
+      // The username/createdAt are set at finalization; empty here is fine.
+      // Membership is NOT marked active locally — the server confirms it.
+      const snapshot = {
+        ...data,
+        email: data.email || user?.email || "",
+        username: "",
+        createdAt: new Date().toISOString(),
+        membershipStatus: "pending" as const,
+      };
+      savePaymentSnapshot(snapshot);
+
+      const providerRedirect = redirect as {
+        authorization_url?: string;
+        checkout_url?: string;
+        status?: string;
+        mock?: boolean;
+      };
+
+      // The pending attempt already completed at the provider.
+      if (providerRedirect?.status === "success") {
+        try {
+          await refreshUser();
+        } catch {
+          // Activation already happened server-side.
+        }
+        submitPayment();
+        return;
+      }
+
+      const checkoutUrl =
+        providerRedirect?.authorization_url ?? providerRedirect?.checkout_url;
+
+      if (checkoutUrl) {
+        window.location.assign(checkoutUrl);
+        return;
+      }
+
+      if (providerRedirect?.mock) {
+        // Mock provider: confirm explicitly so the backend runs the same
+        // activation path as a verified webhook. Nothing is faked client-side.
+        await confirmMockPayment(payment.provider_reference);
+        try {
+          await refreshUser();
+        } catch {
+          // Non-fatal; StepProcessing re-checks via the status endpoint.
+        }
+        submitPayment();
+        return;
+      }
+
+      setError("Payment is not available right now. Please try again shortly.");
+      setIsSubmitting(false);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Unable to start payment. Try again."
+      );
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-7">
+      <StepHeading
+        eyebrow="Payment"
+        title="Choose a payment method"
+        description="Select how you'd like to complete your one-time membership activation."
+      />
+
+      <div className="space-y-3">
+        {PAYMENT_METHODS.map((option) => {
+          const selected = method === option.id;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setMethod(option.id)}
+              aria-pressed={selected}
+              className={cn(
+                "flex w-full items-center justify-between rounded-xl border px-4 py-4 text-left transition-all",
+                selected
+                  ? "border-roicard-accent bg-roicard-accent/5"
+                  : "border-roicard-border bg-roicard-bg-elevated hover:border-roicard-accent/40"
+              )}
+            >
+              <span className="text-sm font-medium text-roicard-text">
+                {option.label}
+              </span>
+              <span
+                className={cn(
+                  "flex h-5 w-5 items-center justify-center rounded-full border-2",
+                  selected
+                    ? "border-roicard-accent"
+                    : "border-roicard-border"
+                )}
+              >
+                {selected && (
+                  <span className="h-2.5 w-2.5 rounded-full bg-roicard-accent" />
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {error && (
+        <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-500">
+          {error}
+        </p>
+      )}
+
+      {pricing.program && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-roicard-accent/40 bg-roicard-accent/10 px-4 py-3">
+          <span className="rounded-full bg-roicard-accent/15 px-2 py-0.5 text-xs font-semibold text-roicard-accent">
+            50% off
+          </span>
+          <p className="text-sm text-roicard-text">
+            You're paying the Program rate.
+            {pricing.original !== null && (
+              <span className="text-roicard-text-muted">
+                {" "}
+                (was GHS {pricing.original})
+              </span>
+            )}
+          </p>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3">
+        <Button
+          onClick={handlePay}
+          disabled={isSubmitting}
+          className="w-full rounded-xl"
+        >
+          {isSubmitting ? "Starting payment..." : `Pay GHS ${pricing.fee}`}
+        </Button>
+        <button
+          type="button"
+          onClick={skipMembership}
+          className="text-center text-sm font-medium text-roicard-text-muted transition-colors hover:text-roicard-text"
+        >
+          Pay later instead
+        </button>
+      </div>
+    </div>
+  );
+}

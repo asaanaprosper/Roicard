@@ -1,0 +1,58 @@
+# Pin the patch level: 8.3.36 is the first release fixing CVE-2026-109618 / CVE-2026-109619.
+# A floating `php:8.3-apache` tag can rebuild onto an unpatched image if the
+# upstream rebuild lags; bump this deliberately instead.
+FROM php:8.3.36-apache
+
+ENV COMPOSER_ALLOW_SUPERUSER=1
+
+WORKDIR /var/www/html
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git unzip libzip-dev libpng-dev libjpeg-dev libfreetype6-dev \
+    libonig-dev libxml2-dev libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PHP extensions
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) \
+    pdo_mysql pdo_pgsql pgsql mbstring zip gd bcmath xml exif
+
+# Enable Apache modules
+RUN a2enmod rewrite headers
+
+# Configure Apache to serve from public/
+RUN sed -i 's|/var/www/html|/var/www/html/public|g' \
+    /etc/apache2/sites-available/000-default.conf \
+    /etc/apache2/apache2.conf
+
+# Allow .htaccess
+RUN sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' \
+    /etc/apache2/apache2.conf
+
+# Install Composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+# Copy application
+COPY . .
+
+# Ensure bootstrap/cache exists and create temp .env for package discovery
+RUN mkdir -p bootstrap/cache && \
+    echo "APP_KEY=" > .env && \
+    php artisan key:generate --force 2>/dev/null; \
+    echo "APP_NAME=Roicard" >> .env
+
+# Install dependencies
+RUN composer install --no-interaction --optimize-autoloader --no-dev
+
+# Remove temp .env, create storage structure, and set permissions
+RUN rm -f .env && \
+    mkdir -p storage/app/public storage/framework/cache storage/framework/sessions storage/framework/views storage/logs && \
+    chmod -R 777 storage bootstrap/cache
+
+EXPOSE 80
+
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]

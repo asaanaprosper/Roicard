@@ -1,0 +1,186 @@
+/**
+ * MembershipPaymentCard
+ *
+ * Dashboard card offering members who haven't paid to activate their one-time
+ * membership fee. Reuses the Paystack payment flow: initiates a payment,
+ * persists the user's profile for resume, and redirects to the provider (or
+ * advances mock mode when no provider is configured).
+ */
+
+"use client";
+
+import { Button } from "@/components/ui/Button";
+import { useAuth } from "@/contexts/AuthContext";
+import { useLiveMemberStatus } from "@/hooks/useLiveMemberStatus";
+import {
+  confirmMockPayment,
+  initiatePayment,
+  rememberPaymentReference,
+} from "@/lib/api/payments";
+import {
+  getCurrentUserProfile,
+  savePaymentSnapshot,
+} from "@/lib/profile/storage";
+import {
+  MEMBERSHIP_BENEFITS,
+  getActivationPricing,
+} from "@/lib/profile/types";
+import { Check, Loader2, Wallet } from "lucide-react";
+import { useCallback, useState } from "react";
+
+export function MembershipPaymentCard() {
+  const { user, refreshUser } = useAuth();
+  const { status, isLoading } = useLiveMemberStatus();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // The server is the source of truth for pricing (NLF campaign members pay a
+  // discounted rate). Resolve server-first, falling back to the standard fee.
+  const pricing = getActivationPricing(user);
+
+  const handlePay = useCallback(async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      // Preserve the user's profile so the payment redirect doesn't lose it.
+      const current = await getCurrentUserProfile();
+      if (current) {
+        savePaymentSnapshot({
+          ...current,
+          membershipStatus: "pending",
+        });
+      }
+
+      const { payment, redirect } = await initiatePayment({
+        amount: pricing.fee,
+        currency: "GHS",
+        method: "card",
+      });
+
+      rememberPaymentReference(payment.provider_reference);
+
+      const providerRedirect = redirect as {
+        authorization_url?: string;
+        checkout_url?: string;
+        status?: string;
+        mock?: boolean;
+      };
+
+      // The pending attempt already completed at the provider — reload so the
+      // dashboard reflects the activated membership instead of paying again.
+      if (providerRedirect?.status === "success") {
+        await refreshUser().catch(() => null);
+        window.location.reload();
+        return;
+      }
+
+      const checkoutUrl =
+        providerRedirect?.authorization_url ?? providerRedirect?.checkout_url;
+
+      if (checkoutUrl) {
+        window.location.assign(checkoutUrl);
+        return;
+      }
+
+      if (providerRedirect?.mock) {
+        // Mock mode: confirm through the backend so the real activation job
+        // runs. Never mark the membership active from the client.
+        await confirmMockPayment(payment.provider_reference);
+        await refreshUser().catch(() => null);
+        window.location.reload();
+        return;
+      }
+
+      // No provider configured — do not pretend the payment succeeded.
+      setError("Payment is not available right now. Please try again shortly.");
+      setIsSubmitting(false);
+    } catch (e) {
+      const serverMessage = (
+        e as { response?: { data?: { message?: string } } } | null
+      )?.response?.data?.message;
+      setError(
+        serverMessage ??
+          (e instanceof Error ? e.message : "Unable to start payment. Try again.")
+      );
+      setIsSubmitting(false);
+    }
+  }, [isSubmitting, pricing.fee, refreshUser]);
+
+  // Hide entirely once the backend confirms the member is active. Checked
+  // after all hooks so the hook order never changes between renders.
+  if (!isLoading && status === "active") {
+    return null;
+  }
+
+  return (
+    <section className="rounded-2xl border border-roicard-accent/40 bg-gradient-to-br from-roicard-primary/10 to-roicard-bg-elevated p-6">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-roicard-accent/15">
+          <Wallet className="h-5 w-5 text-roicard-accent" />
+        </div>
+        <div>
+          <h2 className="text-base font-bold text-roicard-text">
+            Activate your membership
+          </h2>
+          <p className="text-sm text-roicard-text-muted">
+            Unlock everything Roicard has to offer.
+          </p>
+        </div>
+      </div>
+
+      <ul className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {MEMBERSHIP_BENEFITS.map((benefit) => (
+          <li key={benefit} className="flex items-start gap-2">
+            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-roicard-primary/15 text-roicard-accent">
+              <Check className="h-3.5 w-3.5" />
+            </span>
+            <span className="text-sm text-roicard-text">{benefit}</span>
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-6 flex flex-col gap-3 border-t border-roicard-border pt-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-wider text-roicard-text-muted">
+            One-time activation fee
+          </p>
+          <div className="mt-1 flex flex-wrap items-baseline gap-2">
+            <p className="text-2xl font-bold text-roicard-text">
+              {pricing.fee === 0 ? "FREE" : `GHS ${pricing.fee}`}
+            </p>
+            {pricing.original !== null && (
+              <p className="text-sm text-roicard-text-muted line-through">
+                GHS {pricing.original}
+              </p>
+            )}
+            {pricing.program && (
+              <span className="rounded-full border border-roicard-accent/40 bg-roicard-accent/15 px-2 py-0.5 text-xs font-semibold text-roicard-accent">
+                50% off · Program rate
+              </span>
+            )}
+          </div>
+        </div>
+
+        <Button
+          onClick={handlePay}
+          disabled={isSubmitting}
+          className="rounded-xl"
+        >
+          {isSubmitting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            "Pay now"
+          )}
+        </Button>
+      </div>
+
+      {error && (
+        <p className="mt-3 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-500">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}

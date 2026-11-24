@@ -1,0 +1,62 @@
+import axios from "axios";
+import { clearAllUserStorage } from "@/lib/storageCleanup";
+
+const apiClient = axios.create({
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api",
+  headers: { "Content-Type": "application/json", Accept: "application/json" },
+  timeout: 30000,
+});
+
+apiClient.interceptors.request.use((config) => {
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("roicard_token");
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    // Send the cached identity along so the backend can detect a stale token
+    // from a different account and answer 409 instead of leaking that account's
+    // data (prevents cross-account profile bleed).
+    try {
+      const rawUser = localStorage.getItem("roicard_user");
+      if (rawUser) {
+        const user = JSON.parse(rawUser);
+        if (user?.id) config.headers["X-Roicard-User-Id"] = String(user.id);
+        if (user?.email) config.headers["X-Roicard-User-Email"] = String(user.email);
+      }
+    } catch {
+      // malformed cached user — ignore
+    }
+
+    // Never let the browser cache authenticated responses.
+    config.headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+    config.headers["Pragma"] = "no-cache";
+  }
+  return config;
+});
+
+function clearStoredSession() {
+  clearAllUserStorage();
+}
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status;
+    // 401 = invalid/expired token. A 409 only means the cached session is
+    // untrustworthy when the backend explicitly marks it as an identity
+    // mismatch; business-logic conflicts (e.g. "a pending payment already
+    // exists") also answer 409 and must NOT purge the session.
+    const isIdentityMismatch =
+      status === 409 && error.response?.data?.error === "identity_mismatch";
+    if (status === 401 || isIdentityMismatch) {
+      clearStoredSession();
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/auth")) {
+        window.location.href = "/auth/login";
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;
